@@ -1,0 +1,342 @@
+---
+title: "SSR tolerence set by Chai-Squared distribution"
+output:
+  pdf_document: default
+  html_document: default
+  
+  #instructions
+  #line 23 model, history, compresultsが保存されているfolder nameを入れる
+  #line 35 namually choose maximun number of accepted parameters
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+#import libs
+```{r}
+library(ggplot2)
+library(car)
+```
+# setup
+- Set the directory where the model file and compResult is
+```{r}
+foldername='//Volumes/desktop/'
+
+tempFname=strsplit(foldername, "/")
+Fname=tempFname[[1]][length(tempFname[[1]])]
+
+iterationSetting=as.numeric(read.csv(paste0(foldername,"/model/iterationSetting.csv"),header = FALSE)$V1)
+```
+- p value
+- to use L-shaped after chi square (more strict acceptance criterion)
+```{r}
+pvalTolerence=0.05
+strictSelection=TRUE #set to TRUE if want to apply L-shape method
+manuallyChosenAcceptNumParam=NA #set to NA if want to automatically choose it by Chai-square
+```
+#import and process data
+```{r}
+sortIndex=read.table(paste0(foldername,'/compResult/sortIndex.csv'), sep=',', fill = TRUE)
+iterNumber=iterationSetting[1]+iterationSetting[2]-1
+R_df=read.table(paste0(foldername,'/compResult/R_',iterNumber,'.csv'), sep=',')
+Y_df=read.table(paste0(foldername,'/compResult/Y_',iterNumber,'.csv'), sep=',')
+
+observations_df=read.table(paste0(foldername,'/model/observations.txt'), sep=',')
+observations_df=observations_df[!is.na(observations_df$V1)&!is.na(observations_df$V2)&!is.na(observations_df$V3),]
+observations_df=observations_df[seq(1,dim(Y_df)[2]),]
+y_star=c()
+for(text_in in observations_df$V3){
+  y_star=c(y_star,eval(parse(text=(tolower(text_in)))))
+}
+
+obsTime=c()
+for(text_in in observations_df$V1){
+  obsTime=c(obsTime,eval(parse(text=(tolower(text_in)))))
+}
+observations_df$V1=obsTime
+
+obsTime=unique(observations_df$V1)
+#obsTime=as.numeric(read.table(paste0(foldername,'/compResult/ode_time.csv'), sep=','))
+
+
+SSR_vec=as.numeric(R_df)
+min_R=min(R_df, na.rm = TRUE)
+min_index=which(R_df==min_R)[1]
+
+sum((Y_df[min_index,]-y_star)^2)
+residual_vec=as.numeric(Y_df[min_index,]-y_star)
+mean(residual_vec)
+sd(residual_vec)
+ggplot(data.frame(residual=residual_vec), aes(residual))+geom_histogram(bins=10)
+```
+
+# conduct test
+```{r}
+
+qchisq(1-pvalTolerence, df=length(residual_vec)) *(sd(residual_vec))^2
+
+accept_index=which(R_df<(qchisq(1-pvalTolerence, df=length(residual_vec)) *(sd(residual_vec))^2+min_R))
+
+acceptMaxSSR=qchisq(1-pvalTolerence, df=length(residual_vec)) *(sd(residual_vec))^2+min_R
+accept_vec=as.vector(SSR_vec<acceptMaxSSR)
+
+numAccept=sum(accept_vec, na.rm = TRUE)
+
+```
+#Accepted maximum SSR is `r acceptMaxSSR` and `r numAccept` parameter sets were accepted by chai-squared method.
+
+
+#plot SSR v.s. rank
+```{r}
+if(strictSelection){
+  
+if(!is.na(manuallyChosenAcceptNumParam)){
+  sortedAcceptedSSR=sort(SSR_vec[accept_vec])[seq(1,manuallyChosenAcceptNumParam)]
+}else{
+  sortedAcceptedSSR=sort(SSR_vec[accept_vec])
+}
+
+
+trapizoido_area=c()
+for(i in seq(1,length(sortedAcceptedSSR)-1))
+  trapizoido_area=c(trapizoido_area, (sortedAcceptedSSR[1]+sortedAcceptedSSR[i])*i+(sortedAcceptedSSR[i+1]+sortedAcceptedSSR[length(sortedAcceptedSSR)])*(length(sortedAcceptedSSR)-i))
+
+strictMaxAcceptSSR=sortedAcceptedSSR[which(trapizoido_area==min(trapizoido_area))]
+
+accept_index=which(SSR_vec<strictMaxAcceptSSR)
+accept_vec=as.vector(SSR_vec<strictMaxAcceptSSR)
+numAccept=sum(accept_vec, na.rm = TRUE)
+acceptMaxSSR=strictMaxAcceptSSR
+
+}
+ 
+
+```
+#Accepted maximum SSR is `r strictMaxAcceptSSR` and `r numAccept` parameter sets were accepted.
+
+
+```{r}
+ plot_df=data.frame(SSR=SSR_vec, order=rank(SSR_vec), accept=accept_vec)
+
+ggplot(plot_df, aes(x=order,y=SSR, colour=accept))+geom_point()+coord_cartesian(ylim=c(0,acceptMaxSSR*2))+geom_vline(xintercept = numAccept, color="grey")+ annotate(geom="text", x=numAccept, y=acceptMaxSSR*0.5, label=paste("Accepted: ",numAccept,"\n Accepted max SSR: ",formatC(acceptMaxSSR, format = "g", digits = 3)),angle = 90,
+              color="black")+ annotate(geom="text", x=length(SSR_vec)*0.1, y=min_R*1.1, label=paste("min SSR: ",formatC(min_R, format = "g", digits = 3)),
+              color="black")+labs(caption=paste(ifelse(strictSelection,ifelse(is.na(manuallyChosenAcceptNumParam),"Cutoff chosen by chai square and then applied L-shape",paste("Cutoff chosen by user to be ",manuallyChosenAcceptNumParam, "and then applied L-shape")),"Cutoff chosen by chai square"),"\n plot based on", foldername))
+```
+# Residual plots for the parameter set with minimum SSR
+```{r}
+#indexToShow=which(SSR_vec==max(SSR_vec[accept_vec]))
+indexToShow=min_index
+SSR_vec[indexToShow]
+
+temp_residual_vec=as.numeric(Y_df[indexToShow,]-y_star)
+
+
+min=resigual_df=data.frame(square_residual=temp_residual_vec^2,variableNames=observations_df$V2)
+SSR_byVariable=aggregate(resigual_df$square_residual, by=list(variableNames=resigual_df$variableNames), FUN=sum)
+SSR_byVariable$SSR=formatC(SSR_byVariable$x, format = "g", digits = 3)
+
+ggplot(data.frame(residual=temp_residual_vec,prediction=as.numeric(Y_df[indexToShow,]),variableNames=observations_df$V2), aes(y=residual,x=prediction))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()
+
+ggplot(data.frame(residual=temp_residual_vec,prediction=as.numeric(Y_df[indexToShow,]),variableNames=observations_df$V2), aes(y=residual,x=prediction))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()+facet_wrap(variableNames~., scales = "free_x")+
+  geom_text(
+    size    = 5,
+    data    = SSR_byVariable,
+    mapping = aes(x = Inf, y = Inf, label = paste0("SSR=",SSR)),
+    hjust   = 1.05,
+    vjust   = 1.5
+  )
+
+
+ggplot(data.frame(residual=temp_residual_vec,observations=y_star,variableNames=observations_df$V2), aes(y=residual,x=observations))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()
+
+ggplot(data.frame(residual=temp_residual_vec,observations=y_star,variableNames=observations_df$V2), aes(y=residual,x=observations))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()+facet_wrap(variableNames~., scales = "free_x")+
+  geom_text(
+    size    = 5,
+    data    = SSR_byVariable,
+    mapping = aes(x = Inf, y = Inf, label = paste0("SSR=",SSR)),
+    hjust   = 1.05,
+    vjust   = 1.5
+  )
+
+
+qqPlot(temp_residual_vec)
+
+
+```
+
+# Residual plots for the parameter set with maximum accepted SSR
+
+```{r}
+indexToShow=which(SSR_vec==max(SSR_vec[accept_vec]))
+SSR_vec[indexToShow]
+
+temp_residual_vec=as.numeric(Y_df[indexToShow,]-y_star)
+
+
+min=resigual_df=data.frame(square_residual=temp_residual_vec^2,variableNames=observations_df$V2)
+SSR_byVariable=aggregate(resigual_df$square_residual, by=list(variableNames=resigual_df$variableNames), FUN=sum)
+SSR_byVariable$SSR=formatC(SSR_byVariable$x, format = "g", digits = 3)
+
+ggplot(data.frame(residual=temp_residual_vec,prediction=as.numeric(Y_df[indexToShow,]),variableNames=observations_df$V2), aes(y=residual,x=prediction))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()
+
+ggplot(data.frame(residual=temp_residual_vec,prediction=as.numeric(Y_df[indexToShow,]),variableNames=observations_df$V2), aes(y=residual,x=prediction))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()+facet_wrap(variableNames~., scales = "free_x")+
+  geom_text(
+    size    = 5,
+    data    = SSR_byVariable,
+    mapping = aes(x = Inf, y = Inf, label = paste0("SSR=",SSR)),
+    hjust   = 1.05,
+    vjust   = 1.5
+  )
+
+
+ggplot(data.frame(residual=temp_residual_vec,observations=y_star,variableNames=observations_df$V2), aes(y=residual,x=observations))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()
+
+ggplot(data.frame(residual=temp_residual_vec,observations=y_star,variableNames=observations_df$V2), aes(y=residual,x=observations))+geom_point()+geom_hline(yintercept = 0)+geom_smooth()+facet_wrap(variableNames~., scales = "free_x")+
+  geom_text(
+    size    = 5,
+    data    = SSR_byVariable,
+    mapping = aes(x = Inf, y = Inf, label = paste0("SSR=",SSR)),
+    hjust   = 1.05,
+    vjust   = 1.5
+  )
+
+
+qqPlot(temp_residual_vec)
+
+
+```
+
+# plot time course simulation
+```{r}
+numSamples=dim(Y_df)[1]
+numObs=dim(Y_df)[2]
+observations_df=observations_df[1:numObs,]
+
+timeCoursePlot_df=data.frame(time=rep(observations_df$V1, numSamples), sim=as.vector(t(Y_df)), variable=rep(observations_df$V2, numSamples),sampleIndex=as.factor(rep(seq(1,numSamples), each = numObs)))
+
+timeCoursePlot_df$accept=with(timeCoursePlot_df,sampleIndex%in%accept_index)
+
+ggplot(timeCoursePlot_df, aes(x=time,y=sim, group=sampleIndex,colour=accept))+geom_line(alpha=0.2)+geom_point(size=2,shape=4)+geom_point(data=data.frame(time=observations_df$V1, obs=y_star, variable=observations_df$V2,accept=NA), aes(x=time,y=obs,group=variable))+facet_wrap(variable~., scales='free_y')+coord_cartesian(ylim = c(min(y_star)-(max(y_star)-min(y_star))*0.1,max(y_star)+(max(y_star)-min(y_star))*0.1))+labs(caption = paste("plot based on", foldername))
+
+
+ggplot(timeCoursePlot_df, aes(x=time,y=sim, group=sampleIndex,colour=accept))+geom_line(alpha=0.2)+geom_point(size=2,shape=4)+geom_point(data=data.frame(time=observations_df$V1, obs=y_star, variable=observations_df$V2,accept=NA), aes(x=time,y=obs,group=variable))+facet_wrap(variable~., scales='free_y')+labs(caption = paste("plot based on", foldername))
+```
+
+```{r}
+numSamples=dim(Y_df)[1]
+numObs=dim(Y_df)[2]
+observations_df=observations_df[1:numObs,]
+
+timeCoursePlot_df=data.frame(time=rep(observations_df$V1, numSamples), sim=as.vector(t(Y_df)), variable=rep(observations_df$V2, numSamples),sampleIndex=as.factor(rep(seq(1,numSamples), each = numObs)))
+
+timeCoursePlot_df$accept=with(timeCoursePlot_df,sampleIndex%in%accept_index)
+
+ggplot(subset(timeCoursePlot_df,accept==TRUE), aes(x=time,y=sim, group=sampleIndex))+geom_line(alpha=0.2)+geom_point(data=data.frame(time=observations_df$V1, obs=y_star, variable=observations_df$V2), aes(x=time,y=obs,group=variable), colour="red")+facet_wrap(variable~., scales='free_y')+coord_cartesian(ylim = c(min(y_star)-(max(y_star)-min(y_star))*0.1,max(y_star)+(max(y_star)-min(y_star))*0.1))+labs(caption = paste("plot based on", foldername))
+
+
+ggplot(subset(timeCoursePlot_df,accept==TRUE), aes(x=time,y=sim, group=sampleIndex))+geom_line(alpha=0.2)+geom_point(data=data.frame(time=observations_df$V1, obs=y_star, variable=observations_df$V2), aes(x=time,y=obs,group=variable), colour="red")+facet_wrap(variable~., scales='free_y')+labs(caption = paste("plot based on", foldername))
+```
+
+
+
+```{r}
+
+InitialParameter=read.table(paste0(foldername,'/compResult/Parameter_0.csv'), sep=',')
+ParameterNames=as.vector(read.table(paste0(foldername,'/model/parameterNames.txt'), sep=',')$V1)
+names(InitialParameter)=ParameterNames
+
+```
+
+```{r}
+
+FinalParameter=read.table(paste0(foldername,'/compResult/Parameter_',iterNumber,'.csv'), sep=',')
+names(FinalParameter)=ParameterNames
+
+```
+
+
+```{r}
+
+freeParameterNames=c()
+freeParaValues=data.frame()
+data_forTable=data.frame()
+for(pName in ParameterNames){
+  if(min(InitialParameter[,pName])!=max(InitialParameter[,pName])){
+    freeParameterNames=c(freeParameterNames,pName)
+    freeParaValues=rbind(freeParaValues, data.frame(Name=pName, Value=InitialParameter[,pName], Kind="Initial"), data.frame(Name=pName, Value=FinalParameter[accept_vec,pName], Kind="Final"))
+    data_forTable=rbind(data_forTable, data.frame(Name=pName, minimum=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0),na.rm = TRUE), format = "g", digits = 3), percentile_25=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.25),na.rm = TRUE), format = "g", digits = 3), median=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.5),na.rm = TRUE), format = "g", digits = 3), percentile_75=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.75),na.rm = TRUE), format = "g", digits = 3), maximum=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(1),na.rm = TRUE), format = "g", digits = 3)))
+  }
+  
+}
+
+freeParaValues$Kind=factor(as.character(freeParaValues$Kind),level=c("Initial","Final"))
+```
+
+
+# Violin plot with median and interquartile range (in Log scale)
+```{r}
+p<-ggplot(freeParaValues,aes(x=Kind,y=Value))+facet_wrap(Name~., scales = "free")+scale_y_continuous(trans = 'log10')
+
+p+geom_violin(trim=T,fill="#999999",linetype="blank",alpha=I(1/2))+
+ stat_summary(geom="pointrange",fun.y = median, fun.ymin = function(x) quantile(x,probs=0.25), fun.ymax = function(x) quantile(x,probs=0.75), size=0.5,alpha=.5)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0), aes(group=1),size=0.5,alpha=.3,linetype=2)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=1), aes(group=1),size=0.5,alpha=.3,linetype=2)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0.25), aes(group=1),size=0.5,alpha=.3)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0.75), aes(group=1),size=0.5,alpha=.3)+
+   theme(legend.position="none")+labs(caption = paste("plot based on", foldername))
+```
+
+# Violin plot with median and interquartile range
+```{r}
+p<-ggplot(freeParaValues,aes(x=Kind,y=Value))+facet_wrap(Name~., scales = "free")
+
+
+p+geom_violin(trim=T,fill="#999999",linetype="blank",alpha=I(1/2))+
+ stat_summary(geom="pointrange",fun.y = median, fun.ymin = function(x) quantile(x,probs=0.25), fun.ymax = function(x) quantile(x,probs=0.75), size=0.5,alpha=.5)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0), aes(group=1),size=0.5,alpha=.3,linetype=2)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=1), aes(group=1),size=0.5,alpha=.3,linetype=2)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0.25), aes(group=1),size=0.5,alpha=.3)+
+  stat_summary(geom="line",fun.y =  function(x) quantile(x,probs=0.75), aes(group=1),size=0.5,alpha=.3)+
+   theme(legend.position="none")+labs(caption = paste("plot based on", foldername))
+```
+# table of summary statistics
+```{r}
+rownames(data_forTable)=NULL
+(data_forTable)
+```
+
+#Bootstrap analysis visualisation (comment out when not running bootstrap analysis)
+
+```{r}
+bootstrapIter=iterationSetting[1]+iterationSetting[2]+iterationSetting[3]-1
+postBootstrapPara=(read.csv(file=paste0(foldername,"/compResult/Parameter_",bootstrapIter,".csv"),header=FALSE))
+usedForBootstrap=!is.na(as.list(read.csv(file=paste0(foldername,"/compResult/R_",bootstrapIter,".csv"),header=FALSE)))
+
+names(postBootstrapPara)=ParameterNames
+```
+
+```{r}
+
+freeParaBootstrapValues=data.frame()
+for(pName in freeParameterNames){
+  freeParaBootstrapValues=rbind(freeParaBootstrapValues, data.frame(Name=pName, Value=postBootstrapPara[usedForBootstrap,pName], Kind="Bootstrap"))
+}
+
+ggplot(freeParaBootstrapValues, aes(x=Value))+geom_histogram()+facet_wrap(.~Name,scales="free")
+ggplot(freeParaBootstrapValues, aes(x=log10(Value)))+geom_histogram()+facet_wrap(.~Name,scales="free")
+
+
+```
+```{r}
+data_forTable=data.frame()
+
+for(pName in freeParameterNames){
+data_forTable=rbind(data_forTable, data.frame(Name=pName, minimum=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0),na.rm = TRUE), format = "g", digits = 3), percentile_25=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.25),na.rm = TRUE), format = "g", digits = 3), median=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.5),na.rm = TRUE), format = "g", digits = 3), percentile_75=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(0.75),na.rm = TRUE), format = "g", digits = 3), maximum=formatC(quantile(FinalParameter[accept_vec,pName], probs = c(1),na.rm = TRUE), format = "g", digits = 3), RSE=formatC(sd(postBootstrapPara[usedForBootstrap,pName], na.rm = TRUE)/mean(postBootstrapPara[usedForBootstrap,pName], na.rm = TRUE)*100, format = "g", digits = 3)))
+}
+
+```
+
+```{r}
+rownames(data_forTable)=NULL
+(data_forTable)
+```
